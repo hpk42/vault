@@ -14,8 +14,12 @@ Every time you edit and lock the vault, the entire state (the text, version coun
 tiebreak nonce, and attachments) is serialized to JSON and encrypted as a single
 block using AES-256-GCM.
 
-A fresh, random initialization vector (IV) is generated for each update to ensure
-that saving the same content multiple times produces different-looking ciphertext.
+A fresh, random initialization vector (IV) is generated for each update.
+Although the plaintext changes with each edit (preventing identical payloads from
+being stored), a unique IV is still strictly required to satisfy AES-256-GCM
+security properties. Reusing an IV with the same key (a "nonce reuse") would
+destroy both confidentiality and authenticity, allowing an attacker to decrypt
+updates or forge payloads.
 The resulting payload written to the disk contains only the IV and the encrypted data.
 
 To unlock, the app computes the key from your passphrase and attempts to decrypt

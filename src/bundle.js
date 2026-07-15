@@ -204,7 +204,8 @@ const FETCH_PATCH = `
   // setAttribute, new Audio(path)) bypass fetch/XHR; remap
   // them at the DOM boundary instead
   for (const iface of ['HTMLMediaElement',
-    'HTMLImageElement', 'HTMLSourceElement']) {
+    'HTMLImageElement', 'HTMLSourceElement',
+    'HTMLScriptElement']) {
     const proto = window[iface]?.prototype;
     const desc = proto
       && Object.getOwnPropertyDescriptor(proto, 'src');
@@ -300,12 +301,22 @@ export function buildGuestHtml(
     + 'window.__vaultFiles = '
     + jsEscape(Object.fromEntries(urls)) + ';\n'
     + FETCH_PATCH;
-  urls.set('webxdc.js', createUrl(
+  const bundleUrl = createUrl(
     te.encode(prelude + '\n' + shimSource),
-    'application/javascript'));
+    'application/javascript');
+  urls.set('webxdc.js', bundleUrl);
 
-  const html = rewriteHtml(
+  let html = rewriteHtml(
     td.decode(files.get('index.html')), resolveRef);
+  // apps that only feature-detect globalThis.webxdc never
+  // load webxdc.js -- inject the bundle so the runtime
+  // patches are always active before any app script
+  if (!html.includes(bundleUrl)) {
+    const tag = `<script src="${bundleUrl}"></script>`;
+    const injected = html.replace(/<head[^>]*>/i,
+      m => m + tag);
+    html = injected.includes(tag) ? injected : tag + html;
+  }
   return { html, urls: [...urls.values()] };
 }
 

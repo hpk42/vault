@@ -158,6 +158,29 @@ test('buildGuestHtml produces self-contained document', () => {
   assert.ok(shimBundle.includes('"assets/app.js"'));
 });
 
+test('bundle is injected when index.html omits webxdc.js',
+  () => {
+    const { created, createUrl } = makeUrlFactory();
+    const files = sampleFiles();
+    files.set('index.html', te.encode(
+      '<html><head></head><body>'
+      + '<script src="./assets/app.js"></script>'
+      + '</body></html>'));
+    const { html } = buildGuestHtml({
+      files, shimSource: 'SHIM_MARKER;',
+      info: {}, createUrl,
+    });
+    const bundleUrl = created.at(-1).url;
+    const inject = html.indexOf(`<script src="${bundleUrl}"`);
+    assert.ok(inject !== -1, 'bundle script must be injected');
+    assert.ok(inject < html.indexOf('assets/app.js')
+      || !html.includes('assets/app.js'),
+    'bundle must precede app scripts');
+    assert.strictEqual(
+      html.split(bundleUrl).length - 1, 1,
+      'bundle must be referenced exactly once');
+  });
+
 test('buildGuestHtml escapes </script> in user strings',
   () => {
     const { createUrl, created } = makeUrlFactory();

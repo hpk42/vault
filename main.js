@@ -87,6 +87,8 @@ function renderEntry() {
   const input = el('input', {
     id: 'pass-input', class: 'input',
     type: 'text',
+    autocapitalize: 'off', autocorrect: 'off',
+    spellcheck: 'false',
     placeholder: 'Enter passphrase',
   });
   input.onkeydown = e => {
@@ -371,6 +373,8 @@ function renderShareScreen() {
 
   const input = el('input', {
     class: 'input', type: 'text',
+    autocapitalize: 'off', autocorrect: 'off',
+    spellcheck: 'false',
     placeholder: 'Enter passphrase',
   });
   const addBtn = el('button', {

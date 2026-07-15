@@ -85,7 +85,7 @@ so runtime requests for archive paths resolve to the blob URLs.
 
 * **Dynamic asset references**: static HTML/CSS refs,
   `fetch`/`XMLHttpRequest`, `new URL('./asset', import.meta.url)`,
-  and runtime-assigned media/image sources
+  and runtime-assigned media/image/script sources
   (`el.src = path`, `setAttribute('src', ...)`, `new Audio(path)`) resolve;
   computed `import()` and `new Worker(path)` do not.
 

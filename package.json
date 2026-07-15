@@ -12,7 +12,7 @@
     "postbuild": "node scripts/pack-reproducible.js",
     "lint": "eslint .",
     "test": "node --test",
-    "release": "npm version minor && pnpm run build && git push && git push --tags && gh release create v$(node -p \"require('./package.json').version\") vault.xdc --generate-notes"
+    "release": "pnpm test && pnpm run lint && npm version minor && pnpm run build && git push && git push --tags && gh release create v$(node -p \"require('./package.json').version\") vault.xdc --generate-notes"
   },
   "dependencies": {
     "argon2id": "^1.0.1"

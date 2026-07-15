@@ -54,8 +54,6 @@ pnpm install
 pnpm build
 ```
 
-The `.xdc` file is produced as `vault.xdc`.
-
 The `vault.xdc` file is built deterministically.
 Every file and directory in the ZIP is sorted alphabetically,
 and their modification times are set to a fixed date (2026-07-15).

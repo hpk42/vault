@@ -58,8 +58,8 @@ The `.xdc` file is produced as `vault.xdc`.
 
 The `vault.xdc` file is built deterministically.
 Every file and directory in the ZIP is sorted alphabetically,
-and their modification times are set to the timestamp of the last Git
-commit (falling back to a fixed epoch if Git is unavailable).
+and their modification times are set to a fixed date
+(2026-07-15).
 This guarantees that building from the same source commit
 always produces the identical binary file and SHA-256 hash.
 

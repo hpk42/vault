@@ -9,8 +9,10 @@
     "inline-wasm": "node scripts/inline-argon2id.mjs",
     "prebuild": "node scripts/inline-argon2id.mjs",
     "build": "vite build",
+    "postbuild": "node scripts/pack-reproducible.js",
     "lint": "eslint .",
-    "test": "node --test"
+    "test": "node --test",
+    "release": "npm version minor && pnpm run build && git push && git push --tags && gh release create v$(node -p \"require('./package.json').version\") vault.xdc --generate-notes"
   },
   "dependencies": {
     "argon2id": "^1.0.1"
@@ -20,7 +22,7 @@
     "@webxdc/webxdc-dev": "^0.21.0",
     "concurrently": "^9.1.2",
     "eslint": "^10.6.0",
-    "vite": "^6.3.5",
-    "vite-plugin-zip-pack": "^1.2.4"
+    "jszip": "^3.10.1",
+    "vite": "^6.3.5"
   }
 }

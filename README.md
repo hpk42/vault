@@ -57,6 +57,20 @@ pnpm build
 The `.xdc` file is produced as `vault.xdc`.
 
 
+## Reproducible Builds
+
+The `vault.xdc` package is built deterministically.
+Every file and directory in the ZIP is sorted alphabetically,
+and their modification times are set to a fixed epoch
+(1980-01-01).
+This guarantees that building from the same source commit
+always produces the identical binary file and SHA-256 hash.
+
+The GitHub release workflow automatically verifies that the pre-built
+`vault.xdc` uploaded by the release script matches the source code
+by rebuilding it on the runner and comparing hashes.
+
+
 ## Developing
 
 Run against the vite dev server with webxdc-dev

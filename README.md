@@ -2,27 +2,23 @@
 
 Encrypted [webxdc](https://webxdc.org) app host.
 
-Each passphrase unlocks its own end-to-end encrypted "room" hosting a webxdc app:
-the first user to unlock a passphrase uploads a `.xdc` file,
-which is then permanently bound to that passphrase.
+Each passphrase unlocks its own end-to-end encrypted "room" hosting a "guest" webxdc app:
+the first user to unlock a passphrase uploads a `.xdc` file.
 Everyone entering the same passphrase runs the same app
 and collaborates through encrypted updates;
-everyone else sees only unreadable ciphertext.
-
-Vault runs in a *webxdc runtime* aka
-hosting messenger (e.g. Delta Chat) that executes webxdc apps.
-
+everyone not knowing the passphrase else sees unreadable ciphertext.
 
 ## How it Works
 
-Entering a passphrase derives a symmetric AES-256 key via Argon2id
-(fixed salt `"vault-v1"`).
+Entering a passphrase derives a symmetric AES-256 key via Argon2id.
+
 All outer chat updates carry only `{ iv, data }` AES-256-GCM ciphertexts
 with empty descriptions.
+
 Two inner payload types exist:
 
 * `app_definition`: the guest `.xdc` archive.
-  If competing definitions exist, the lowest outer serial wins, permanently.
+  If competing definitions exist, the lowest outer serial wins.
 
 * `room_update`: an update sent by the guest app via its
   `webxdc.sendUpdate()`.
@@ -34,7 +30,8 @@ the payloads that decrypt form the app definition and its update stream.
 ### Running guest apps
 
 The guest `.xdc` is decrypted and unzipped entirely in memory
-and run from a *sandboxed* `srcdoc` iframe (`sandbox="allow-scripts"`, opaque origin):
+and run from a *sandboxed* `srcdoc` iframe
+(`sandbox="allow-scripts allow-forms allow-modals"`, opaque origin):
 every archive file becomes a `blob:` URL,
 and all `src`/`href`/`url()` references in HTML and CSS are rewritten to those URLs.
 App-supplied CSP meta tags are dropped
@@ -56,9 +53,11 @@ each level bundles its guest independently and encrypts once more.
 ### Guest webxdc API
 
 The guest's packaged `webxdc.js` is replaced by a shim
-that bridges each API the outer runtime provides, via postMessage:
+that bridges each API the outer runtime provides, via postMessage
+(the shim is injected into `index.html` even if the app
+never references `webxdc.js` itself):
 
-* `sendUpdate` / `setUpdateListener`: guest updates travel
+* `sendUpdate` / `setUpdateListener`: room updates travel
   encrypted as `room_update` payloads.
   Descriptions are always sent empty;
   `sendUpdateMaxSize` is the outer budget minus encryption overhead.
@@ -75,7 +74,20 @@ that bridges each API the outer runtime provides, via postMessage:
 * `selfAddr`, `selfName`: identical to the outer values.
 
 The shim also patches `fetch`/`XMLHttpRequest`
+and other dynamic asset references (see limitations below)
 so runtime requests for archive paths resolve to the blob URLs.
+
+
+### Sharing a vault with contents
+
+The entry screen links to a share screen:
+enter one or more passphrases,
+and Vault packages itself plus the matching encrypted updates
+(as `preloaded.json`) into a new `vault-collection.xdc`,
+sent to the chat via `sendToChat`.
+Opening the collection preloads that history --
+recipients still need the passphrase(s) to unlock the room(s),
+and new updates keep flowing through the new chat.
 
 
 ### Guest app limitations
@@ -211,10 +223,6 @@ the passphrase and the key derived from it.
 * **Traffic analysis**: sizes, timing, and frequency of updates
   reveal *that* and *when* a room is active -- never *what* it contains.
 
-* **No sender authentication in a room**: the passphrase is a shared group key;
-  anyone holding it can read and forge any room message.
-  Attribution relies on the outer chat.
-
 * **No forward secrecy or key rotation**: one static key per passphrase, forever.
   Whoever ever learns the passphrase can decrypt the room's entire past and future;
   there is no revocation short of abandoning the room.
@@ -222,16 +230,10 @@ the passphrase and the key derived from it.
 * **Guest apps are origin-isolated, not audited**: the guest
   runs in a sandboxed iframe with an opaque origin and cannot reach the vault document,
   the key, or the passphrase;
-  its only capability is the postMessage bridge --
+  its only capability is the postMessage bridge for
   reading and writing its own room's updates and realtime data,
   plus user-confirmed actions (`importFiles` picker, `sendToChat` dialog).
   This relies on the browser's sandbox being correct.
-  A malicious guest can still abuse these legitimate powers
-  (corrupt or spam its own room, or *ask* the user to share room content via `sendToChat`),
-  and the binding is permanent -- so still prefer `.xdc` files you trust.
-
-* **Availability**: any chat member can flood the chat with garbage updates;
-  Vault ignores them but the runtime still stores and transfers them.
 
 * **Runtime exposure**: while unlocked, plaintext lives in memory;
   locking discards the key.
@@ -251,8 +253,6 @@ pnpm build
 `vault.xdc` is built deterministically:
 ZIP entries are sorted alphabetically with fixed modification times,
 so the same source commit always yields the identical binary and SHA-256 hash.
-The release workflow verifies the uploaded `vault.xdc`
-by rebuilding it and comparing hashes.
 
 
 ## Developing
@@ -263,6 +263,27 @@ Run against the vite dev server with webxdc-dev
 ```bash
 pnpm dev:webxdc
 ```
+
+Run the tests (no mocks; slow key-derivation tests included)
+and the linter:
+
+```bash
+pnpm test
+pnpm lint
+```
+
+
+## Releasing
+
+```bash
+pnpm release
+```
+
+Runs tests and lint, bumps the minor version, builds,
+pushes commit and tag,
+and creates a GitHub release with `vault.xdc` attached.
+The release workflow verifies the uploaded artifact
+by rebuilding it and comparing hashes.
 
 
 ## Updating Argon2id

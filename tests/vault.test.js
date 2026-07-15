@@ -68,7 +68,7 @@ test('updates from wrong passphrase are ignored', async () => {
   await b.unlock('pass-B');
 
   const received = [];
-  b.setInnerUpdateListener(0, u => received.push(u));
+  b.setRoomUpdateListener(0, u => received.push(u));
   const zipA = te.encode('zip-A');
   const zipB = te.encode('zip-B');
   await a.uploadApp(zipA, 'a.xdc');
@@ -83,7 +83,7 @@ test('updates from wrong passphrase are ignored', async () => {
   assert.strictEqual(b.roomUpdates.length, 0,
     'wrong-key vault must not decrypt room updates');
   assert.strictEqual(received.length, 0,
-    'wrong-key inner listener must never fire');
+    'wrong-key room listener must never fire');
 });
 
 
@@ -203,7 +203,7 @@ test('room updates round-trip', async () => {
   await b.unlock('shared');
 
   const received = [];
-  b.setInnerUpdateListener(0, u => received.push(u));
+  b.setRoomUpdateListener(0, u => received.push(u));
   await a.sendRoomUpdate(
     { payload: { move: 'e4' }, info: 'white moved' });
   await chat.settle();
@@ -233,7 +233,7 @@ test('updates are forwarded in outer serial order',
     await v.applyUpdate({ serial: 2, payload: payloads[1] });
 
     const received = [];
-    v.setInnerUpdateListener(0, u => received.push(u));
+    v.setRoomUpdateListener(0, u => received.push(u));
     assert.deepStrictEqual(
       received.map(u => u.serial), [1, 2, 3],
       'replay must be ordered by outer serial');
@@ -254,7 +254,7 @@ test('setUpdateListener replays only after given serial',
     await chat.settle();
 
     const received = [];
-    b.setInnerUpdateListener(2, u => received.push(u));
+    b.setRoomUpdateListener(2, u => received.push(u));
     assert.deepStrictEqual(
       received.map(u => u.serial), [3, 4, 5],
       'only updates with serial > 2 must be replayed');
@@ -284,7 +284,7 @@ test('preloaded vaults still exchange new updates',
       'preloaded app definition must be found');
 
     const received = [];
-    b.setInnerUpdateListener(0, u => received.push(u));
+    b.setRoomUpdateListener(0, u => received.push(u));
     await a.sendRoomUpdate({ payload: 'new' });
     await chat.settle();
 

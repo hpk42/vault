@@ -226,7 +226,7 @@ async function runApp() {
           === 'function',
         hasSendToChat: typeof window.webxdc.sendToChat
           === 'function',
-        // guest updates are wrapped in one encrypted
+        // room updates are wrapped in one encrypted
         // envelope, so pass the derived budget down
         sendUpdateMaxSize: PLAINTEXT_BUDGET,
       },
@@ -287,7 +287,7 @@ window.addEventListener('message', (ev) => {
 
   if (msg.type === 'vault-setUpdateListener') {
     const target = iframe.contentWindow;
-    vault.setInnerUpdateListener(msg.serial, (update) => {
+    vault.setRoomUpdateListener(msg.serial, (update) => {
       target.postMessage(
         { type: 'vault-update', update }, '*');
     });

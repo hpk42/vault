@@ -333,7 +333,7 @@ function b64encode(bytes) {
 }
 
 // build the boot document for the sandboxed guest iframe
-// (sandbox="allow-scripts", opaque origin). blob: URLs are
+// (opaque origin). blob: URLs are
 // origin-bound, so the vault cannot create them for the
 // guest; instead the boot script creates them *inside* the
 // sandbox, where they share the guest's own opaque origin

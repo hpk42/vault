@@ -12,7 +12,7 @@ const IV_BYTES = 12;
 // fallback when the runtime doesn't advertise a limit
 export const MAX_APP_SIZE = 1024 * 1024;
 
-// largest plaintext (app archive or guest update) that still
+// largest plaintext (app archive or room update) that still
 // fits into one outer update of the given size budget: the
 // encrypted envelope travels as base64 { iv, data } JSON
 // (4/3 inflation), plus AES-GCM tag, IV, and framing --
@@ -146,7 +146,7 @@ export async function decryptEnvelope(key, payload) {
 
    Pure core class. All I/O goes through plain data:
    inputs  : applyUpdate(), unlock(), uploadApp(),
-             sendRoomUpdate(), setInnerUpdateListener()
+             sendRoomUpdate(), setRoomUpdateListener()
    outputs : onSendUpdate(payload, descr) and onAppChanged()
              callbacks.
    It never touches webxdc, DOM or iframes,
@@ -163,7 +163,7 @@ export class Vault {
     this.roomUpdates = [];      // { serial, update }, sorted
     this.onSendUpdate = null;  // (payload, descr) => {}
     this.onAppChanged = null;  // () => {}
-    this._innerListener = null; // { fn, lastSerial }
+    this._roomListener = null; // { fn, lastSerial }
     this._queue = Promise.resolve();
   }
 
@@ -181,7 +181,7 @@ export class Vault {
     this.key = null;
     this.appDefinition = null;
     this.roomUpdates = [];
-    this._innerListener = null;
+    this._roomListener = null;
   }
 
   // feed every outer webxdc update (own echoes included) here;
@@ -239,15 +239,15 @@ export class Vault {
     this._send(payload);
   }
 
-  // fn receives guest updates ordered by outer serial, with
+  // fn receives room updates ordered by outer serial, with
   // update.serial / update.max_serial set to outer serials;
   // only updates with serial > sinceSerial are delivered
-  setInnerUpdateListener(sinceSerial, fn) {
+  setRoomUpdateListener(sinceSerial, fn) {
     if (!fn) {
-      this._innerListener = null;
+      this._roomListener = null;
       return;
     }
-    this._innerListener = { fn, lastSerial: sinceSerial };
+    this._roomListener = { fn, lastSerial: sinceSerial };
     this._forward();
   }
 
@@ -280,7 +280,7 @@ export class Vault {
   }
 
   _forward() {
-    const l = this._innerListener;
+    const l = this._roomListener;
     if (!l || this.roomUpdates.length === 0) return;
     const maxSerial =
       this.roomUpdates[this.roomUpdates.length - 1].serial;

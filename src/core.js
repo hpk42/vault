@@ -146,7 +146,7 @@ export async function decryptEnvelope(key, payload) {
 
    Pure core class. All I/O goes through plain data:
    inputs  : applyUpdate(), unlock(), uploadApp(),
-             sendSubAppUpdate(), setInnerUpdateListener()
+             sendRoomUpdate(), setInnerUpdateListener()
    outputs : onSendUpdate(payload, descr) and onAppChanged()
              callbacks.
    It never touches webxdc, DOM or iframes,
@@ -159,7 +159,7 @@ export class Vault {
     this.passphrase = null;
     this.key = null;
     this.appDefinition = null; // { serial, filename, bytes }
-    this.subUpdates = [];      // { serial, update }, sorted
+    this.roomUpdates = [];      // { serial, update }, sorted
     this.onSendUpdate = null;  // (payload, descr) => {}
     this.onAppChanged = null;  // () => {}
     this._innerListener = null; // { fn, lastSerial }
@@ -179,7 +179,7 @@ export class Vault {
     this.passphrase = null;
     this.key = null;
     this.appDefinition = null;
-    this.subUpdates = [];
+    this.roomUpdates = [];
     this._innerListener = null;
   }
 
@@ -209,10 +209,10 @@ export class Vault {
     this._send(payload);
   }
 
-  async sendSubAppUpdate(update) {
+  async sendRoomUpdate(update) {
     if (!this.key) throw new Error('vault is locked');
     const payload = await encryptEnvelope(this.key, {
-      type: 'sub_app_update',
+      type: 'room_update',
       update,
     });
     this._send(payload);
@@ -250,9 +250,9 @@ export class Vault {
         };
         if (this.onAppChanged) this.onAppChanged();
       }
-    } else if (header.type === 'sub_app_update'
+    } else if (header.type === 'room_update'
         && header.update) {
-      insertSorted(this.subUpdates,
+      insertSorted(this.roomUpdates,
         { serial, update: header.update });
       this._forward();
     }
@@ -260,14 +260,14 @@ export class Vault {
 
   _forward() {
     const l = this._innerListener;
-    if (!l || this.subUpdates.length === 0) return;
+    if (!l || this.roomUpdates.length === 0) return;
     const maxSerial =
-      this.subUpdates[this.subUpdates.length - 1].serial;
-    for (const su of this.subUpdates) {
-      if (su.serial <= l.lastSerial) continue;
-      l.lastSerial = su.serial;
-      l.fn(Object.assign({}, su.update, {
-        serial: su.serial,
+      this.roomUpdates[this.roomUpdates.length - 1].serial;
+    for (const ru of this.roomUpdates) {
+      if (ru.serial <= l.lastSerial) continue;
+      l.lastSerial = ru.serial;
+      l.fn(Object.assign({}, ru.update, {
+        serial: ru.serial,
         max_serial: maxSerial,
       }));
     }

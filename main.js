@@ -261,7 +261,7 @@ window.addEventListener('message', (ev) => {
     });
     target.postMessage({ type: 'vault-replay-done' }, '*');
   } else if (msg.type === 'vault-sendUpdate') {
-    vault.sendSubAppUpdate(msg.update);
+    vault.sendRoomUpdate(msg.update);
   } else if (msg.type === 'vault-realtime-join') {
     ensureRealtime();
     const target = iframe.contentWindow;

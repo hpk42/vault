@@ -60,39 +60,28 @@ const te = new TextEncoder();
 
 /* ---- passphrase isolation ---- */
 
-test('different passphrases host different apps', async () => {
+test('updates from wrong passphrase are ignored', async () => {
   const a = new Vault();
   const b = new Vault();
   const chat = connectChat(a, b);
   await a.unlock('pass-A');
   await b.unlock('pass-B');
 
+  const received = [];
+  b.setInnerUpdateListener(0, u => received.push(u));
   const zipA = te.encode('zip-A');
   const zipB = te.encode('zip-B');
   await a.uploadApp(zipA, 'a.xdc');
   await b.uploadApp(zipB, 'b.xdc');
+  await a.sendRoomUpdate({ payload: 'private to A' });
   await chat.settle();
 
   assert.deepStrictEqual(a.appDefinition.bytes, zipA,
     'vault A must run its own app');
   assert.deepStrictEqual(b.appDefinition.bytes, zipB,
-    'vault B must run its own app');
-});
-
-test('updates from wrong passphrase are ignored', async () => {
-  const sender = new Vault();
-  const receiver = new Vault();
-  const chat = connectChat(sender, receiver);
-  await sender.unlock('key-A');
-  await receiver.unlock('key-B');
-
-  const received = [];
-  receiver.setInnerUpdateListener(0, u => received.push(u));
-  await sender.sendSubAppUpdate({ payload: 'private to A' });
-  await chat.settle();
-
-  assert.strictEqual(receiver.subUpdates.length, 0,
-    'wrong-key vault must not decrypt sub-app updates');
+    'foreign app definition must not clobber B\'s app');
+  assert.strictEqual(b.roomUpdates.length, 0,
+    'wrong-key vault must not decrypt room updates');
   assert.strictEqual(received.length, 0,
     'wrong-key inner listener must never fire');
 });
@@ -204,9 +193,9 @@ test('envelope round-trips header and binary body', () => {
 });
 
 
-/* ---- sub-app update flow ---- */
+/* ---- room update flow ---- */
 
-test('sub-app updates round-trip', async () => {
+test('room updates round-trip', async () => {
   const a = new Vault();
   const b = new Vault();
   const chat = connectChat(a, b);
@@ -215,7 +204,7 @@ test('sub-app updates round-trip', async () => {
 
   const received = [];
   b.setInnerUpdateListener(0, u => received.push(u));
-  await a.sendSubAppUpdate(
+  await a.sendRoomUpdate(
     { payload: { move: 'e4' }, info: 'white moved' });
   await chat.settle();
 
@@ -233,7 +222,7 @@ test('updates are forwarded in outer serial order',
     await sender.unlock('order');
     const payloads = capturePayloads(sender);
     for (const n of [1, 2, 3]) {
-      await sender.sendSubAppUpdate({ payload: n });
+      await sender.sendRoomUpdate({ payload: n });
     }
 
     const v = new Vault();
@@ -260,7 +249,7 @@ test('setUpdateListener replays only after given serial',
     await a.unlock('resume');
     await b.unlock('resume');
     for (const n of [1, 2, 3, 4, 5]) {
-      await a.sendSubAppUpdate({ payload: n });
+      await a.sendRoomUpdate({ payload: n });
     }
     await chat.settle();
 
@@ -271,23 +260,6 @@ test('setUpdateListener replays only after given serial',
       'only updates with serial > 2 must be replayed');
   });
 
-test('late updates reach a registered listener', async () => {
-  const a = new Vault();
-  const b = new Vault();
-  const chat = connectChat(a, b);
-  await a.unlock('live');
-  await b.unlock('live');
-
-  const received = [];
-  b.setInnerUpdateListener(0, u => received.push(u));
-  await a.sendSubAppUpdate({ payload: 'later' });
-  await chat.settle();
-
-  assert.strictEqual(received.length, 1,
-    'live update must be forwarded');
-  assert.strictEqual(received[0].payload, 'later');
-});
-
 
 /* ---- metadata hygiene ---- */
 
@@ -297,7 +269,7 @@ test('outer updates always use empty descr and expose only '
   const chat = connectChat(v);
   await v.unlock('hygiene');
   await v.uploadApp(te.encode('zip'), 'secret-name.xdc');
-  await v.sendSubAppUpdate({ payload: 'x', info: 'moved' });
+  await v.sendRoomUpdate({ payload: 'x', info: 'moved' });
   await chat.settle();
 
   assert.strictEqual(chat.sent.length, 2);

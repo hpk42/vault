@@ -24,7 +24,7 @@ Two inner payload types exist:
 * `app_definition`: the guest `.xdc` archive.
   If competing definitions exist, the lowest outer serial wins, permanently.
 
-* `sub_app_update`: an update sent by the guest app via its
+* `room_update`: an update sent by the guest app via its
   `webxdc.sendUpdate()`.
 
 Unlocking attempts to decrypt every update in the chat history;
@@ -59,7 +59,7 @@ The guest's packaged `webxdc.js` is replaced by a shim
 that bridges each API the outer runtime provides, via postMessage:
 
 * `sendUpdate` / `setUpdateListener`: guest updates travel
-  encrypted as `sub_app_update` payloads.
+  encrypted as `room_update` payloads.
   Descriptions are always sent empty;
   `sendUpdateMaxSize` is the outer budget minus encryption overhead.
 

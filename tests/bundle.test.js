@@ -171,11 +171,14 @@ test('buildGuestHtml escapes </script> in user strings',
     assert.ok(bundle.includes('\\u003c/script>'));
   });
 
-test('buildGuestHtml requires index.html', () => {
+test('bundling requires index.html', () => {
+  const files = new Map([['a.js', new Uint8Array()]]);
   const { createUrl } = makeUrlFactory();
   assert.throws(() => buildGuestHtml({
-    files: new Map([['a.js', new Uint8Array()]]),
-    shimSource: '', info: {}, createUrl,
+    files, shimSource: '', info: {}, createUrl,
+  }), /index\.html/);
+  assert.throws(() => buildBootHtml({
+    files, shimSource: '', info: {}, bundleSource: '',
   }), /index\.html/);
 });
 
@@ -231,13 +234,6 @@ test('buildBootHtml keeps hostile strings inside the script',
     assert.ok(boot.endsWith('</script></body></html>'));
     assert.ok(boot.includes('\\u003c/script>'));
   });
-
-test('buildBootHtml requires index.html', () => {
-  assert.throws(() => buildBootHtml({
-    files: new Map([['a.js', new Uint8Array()]]),
-    shimSource: '', info: {}, bundleSource: '',
-  }), /index\.html/);
-});
 
 test('rewriteHtml drops app-supplied CSP meta tags', () => {
   const html = '<head><meta http-equiv="Content-Security-Policy"'

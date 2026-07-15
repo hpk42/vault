@@ -4,10 +4,23 @@ Encrypted vault [webxdc](https://webxdc.org) app.
 Each vault is locked behind a passphrase --
 only those who know it can read or edit the content.
 
-Uses Argon2id (WASM) for key derivation
-and AES-256-GCM for encryption.
-All data on disk is encrypted;
-update payloads contain only `{ iv, data }`.
+
+## How it Works
+
+Upon entering a passphrase, the app derives a symmetric key using the Argon2id
+algorithm with a fixed, hardcoded salt ("vault-v1").
+
+Every time you edit and lock the vault, the entire state (the text, version counter,
+tiebreak nonce, and attachments) is serialized to JSON and encrypted as a single
+block using AES-256-GCM.
+
+A fresh, random initialization vector (IV) is generated for each update to ensure
+that saving the same content multiple times produces different-looking ciphertext.
+The resulting payload written to the disk contains only the IV and the encrypted data.
+
+To unlock, the app computes the key from your passphrase and attempts to decrypt
+all update payloads in the chat history. Payloads that decrypt successfully are
+collected, and the one with the highest version/tiebreak is displayed.
 
 
 ## Building

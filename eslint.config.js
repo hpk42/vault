@@ -24,6 +24,8 @@ export default [
         btoa: 'readonly',
         WebAssembly: 'readonly',
         DecompressionStream: 'readonly',
+        CompressionStream: 'readonly',
+        fetch: 'readonly',
       },
     },
     rules: {

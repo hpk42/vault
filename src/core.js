@@ -156,6 +156,7 @@ export class Vault {
   constructor({ maxAppSize: limit = MAX_APP_SIZE } = {}) {
     this.maxAppSize = limit;
     this.updates = [];        // raw outer { serial, payload }
+    this._serialOffset = 0;   // count of preloaded updates
     this.passphrase = null;
     this.key = null;
     this.appDefinition = null; // { serial, filename, bytes }
@@ -186,9 +187,29 @@ export class Vault {
   // feed every outer webxdc update (own echoes included) here;
   // processing is serialized to preserve arrival order
   applyUpdate(update) {
-    const p = update && update.payload;
+    if (!update) return Promise.resolve();
+    return this._apply({
+      serial: update.serial + this._serialOffset,
+      payload: update.payload,
+    });
+  }
+
+  // payloads baked into a shared collection archive occupy
+  // serials 1..N; applyUpdate() shifts live chat serials by
+  // N so they sort after the preloaded history and new
+  // updates keep working
+  preload(payloads) {
+    let last = Promise.resolve();
+    for (const payload of payloads) {
+      last = this._apply(
+        { serial: ++this._serialOffset, payload });
+    }
+    return last;
+  }
+
+  _apply(u) {
+    const p = u.payload;
     if (!p || !p.iv || !p.data) return Promise.resolve();
-    const u = { serial: update.serial, payload: p };
     this.updates.push(u);
     this._queue = this._queue.then(() => {
       if (this.key) return this._integrate(u);

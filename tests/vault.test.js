@@ -261,6 +261,43 @@ test('setUpdateListener replays only after given serial',
   });
 
 
+test('preloaded vaults still exchange new updates',
+  async () => {
+    // a sharer's history: app definition + one room update
+    const sharer = new Vault();
+    await sharer.unlock('col');
+    const history = capturePayloads(sharer);
+    await sharer.uploadApp(te.encode('zip'), 'a.xdc');
+    await sharer.sendRoomUpdate({ payload: 'old' });
+
+    // two peers open the collection: preload the baked-in
+    // payloads, then join a fresh chat
+    const a = new Vault();
+    const b = new Vault();
+    await a.preload(history);
+    await b.preload(history);
+    const chat = connectChat(a, b);
+    await a.unlock('col');
+    await b.unlock('col');
+
+    assert.strictEqual(a.appDefinition.filename, 'a.xdc',
+      'preloaded app definition must be found');
+
+    const received = [];
+    b.setInnerUpdateListener(0, u => received.push(u));
+    await a.sendRoomUpdate({ payload: 'new' });
+    await chat.settle();
+
+    assert.deepStrictEqual(
+      received.map(u => u.payload), ['old', 'new'],
+      'new updates must follow the preloaded history');
+    assert.ok(received[1].serial > received[0].serial,
+      'live serials must sort after preloaded ones');
+    assert.strictEqual(b.appDefinition.serial, 1,
+      'chat updates must not displace the preloaded app');
+  });
+
+
 /* ---- metadata hygiene ---- */
 
 test('outer updates always use empty descr and expose only '

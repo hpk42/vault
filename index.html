@@ -82,6 +82,7 @@
       opacity: 0.5;
       cursor: default;
     }
+    .input:disabled { opacity: 0.5; }
 
     /* ---------- vault screen ---------- */
 
@@ -148,6 +149,106 @@
       color: #555;
       margin-top: 4px;
       flex-shrink: 0;
+    }
+    .hint a {
+      color: #666;
+      text-decoration: none;
+    }
+    .hint a:hover { color: #aaa; }
+
+    /* ---------- share screen ---------- */
+
+    .share-card {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      max-width: 360px;
+      margin: 0 auto;
+      width: 100%;
+      padding-top: 24px;
+      gap: 10px;
+      overflow: hidden;
+    }
+    .share-card h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+      text-align: center;
+    }
+    .share-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .share-status {
+      font-size: 12px;
+      min-height: 18px;
+      text-align: center;
+    }
+    .share-status.ok { color: #4ade80; }
+    .share-status.err { color: #f87171; }
+    .share-status.info { color: #60a5fa; }
+    .room-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .room-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e1e22;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .room-info { flex: 1; min-width: 0; }
+    .room-info .room-app {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e0e0e0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .room-info .room-meta {
+      font-size: 11px;
+      color: #777;
+    }
+    .room-remove {
+      background: none;
+      border: none;
+      color: #666;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .room-remove:hover { color: #f66; }
+    .btn-secondary {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 500;
+      background: transparent;
+      color: #aaa;
+      border: 1px solid #444;
+      border-radius: 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .btn-secondary:active { background: #222; }
+    .share-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .share-actions .btn,
+    .share-actions .btn-secondary {
+      flex: 1;
     }
 
   </style>

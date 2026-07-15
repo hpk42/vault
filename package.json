@@ -9,7 +9,8 @@
     "inline-wasm": "node scripts/inline-argon2id.mjs",
     "prebuild": "node scripts/inline-argon2id.mjs",
     "build": "vite build",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test"
   },
   "dependencies": {
     "argon2id": "^1.0.1"

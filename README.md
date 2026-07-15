@@ -27,6 +27,24 @@ all update payloads in the chat history. Payloads that decrypt successfully are
 collected, and the one with the highest version/tiebreak is displayed.
 
 
+## Security & Threat Model
+
+The primary threat model is an attacker who has seized a device and obtained access to
+the local database containing all update payloads, or intercepted the network traffic.
+
+* **Exposed Data**: The database only contains `{ iv, data }` payloads. No metadata, version
+  counters, salts, plain text, or filenames are stored in the clear.
+
+* **Brute-Force Protection**: To guess the passphrase, the attacker must run Argon2id
+  for each attempt to derive the key and verify if the data decrypts.
+
+* **Argon2id Parameters**: By using Argon2id with 64 MiB memory and 20 passes, key derivation
+  is memory-hard. This limits GPU/ASIC acceleration, making brute-force attacks extremely slow.
+
+* **Recommendation**: A weak or short numeric PIN can be brute-forced. A strong alphanumeric
+  passphrase of 8 or more characters is recommended for secure protection.
+
+
 ## Building
 
 ```bash

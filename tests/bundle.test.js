@@ -148,6 +148,8 @@ test('buildGuestHtml produces self-contained document', () => {
   assert.ok(shimBundle.includes('XMLHttpRequest'));
   assert.ok(shimBundle.includes('makeStorage'));
   assert.ok(shimBundle.includes('indexedDB'));
+  assert.ok(shimBundle.includes('HTMLMediaElement'));
+  assert.ok(shimBundle.includes('setAttribute'));
   assert.ok(shimBundle.indexOf('window.__vaultInfo')
     < shimBundle.indexOf('SHIM_MARKER;'));
   // packaged webxdc.js stub was discarded

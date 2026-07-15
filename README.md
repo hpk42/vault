@@ -84,9 +84,10 @@ so runtime requests for archive paths resolve to the blob URLs.
   i.e. `webxdc.sendUpdateMaxSize` minus overhead (fallback: 1 MB).
 
 * **Dynamic asset references**: static HTML/CSS refs,
-  `fetch`/`XMLHttpRequest`, and `new URL('./asset', import.meta.url)` resolve;
-  computed `import()`, `new Worker(path)`, and relative paths assigned
-  to DOM properties like `img.src` do not.
+  `fetch`/`XMLHttpRequest`, `new URL('./asset', import.meta.url)`,
+  and runtime-assigned media/image sources
+  (`el.src = path`, `setAttribute('src', ...)`, `new Audio(path)`) resolve;
+  computed `import()` and `new Worker(path)` do not.
 
 * **No Service Workers** (they need a real origin).
 

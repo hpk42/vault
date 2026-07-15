@@ -200,6 +200,33 @@ const FETCH_PATCH = `
       return origOpen.call(
         this, method, resolve(url) ?? url, ...rest);
     };
+  // runtime-assigned media/image sources (el.src = ...,
+  // setAttribute, new Audio(path)) bypass fetch/XHR; remap
+  // them at the DOM boundary instead
+  for (const iface of ['HTMLMediaElement',
+    'HTMLImageElement', 'HTMLSourceElement']) {
+    const proto = window[iface]?.prototype;
+    const desc = proto
+      && Object.getOwnPropertyDescriptor(proto, 'src');
+    if (!desc) continue;
+    Object.defineProperty(proto, 'src', {
+      ...desc,
+      set(v) { desc.set.call(this, resolve(v) ?? v); },
+    });
+  }
+  const origSetAttr = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    if (String(name).toLowerCase() === 'src') {
+      value = resolve(value) ?? value;
+    }
+    return origSetAttr.call(this, name, value);
+  };
+  window.Audio = new Proxy(window.Audio, {
+    construct(target, args) {
+      if (args.length) args[0] = resolve(args[0]) ?? args[0];
+      return new target(...args);
+    },
+  });
   // support new URL('./asset', import.meta.url): blob URLs
   // are not hierarchical, so resolve relative refs against
   // the archive path the base blob URL was created from

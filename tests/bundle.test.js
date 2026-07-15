@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizePath, rewriteHtml, rewriteCss,
-  buildGuestHtml, mimeFor,
+  buildGuestHtml, buildBootHtml, mimeFor,
 } from '../src/bundle.js';
 
 const te = new TextEncoder();
@@ -177,4 +177,74 @@ test('buildGuestHtml requires index.html', () => {
     files: new Map([['a.js', new Uint8Array()]]),
     shimSource: '', info: {}, createUrl,
   }), /index\.html/);
+});
+
+test('buildBootHtml round-trips the archive files', () => {
+  const files = sampleFiles();
+  const boot = buildBootHtml({
+    files, shimSource: 'SHIM_MARKER;',
+    info: { selfAddr: 'a@x', selfName: 'me',
+      hasRealtime: false },
+    bundleSource: 'BUNDLE_MARKER;',
+  });
+  const m = /const DATA = (\{.*?\});\n/s.exec(boot);
+  assert.ok(m, 'boot embeds a DATA object');
+  const data = JSON.parse(m[1]);
+  assert.deepEqual(
+    Object.keys(data).sort(), [...files.keys()].sort());
+  for (const [path, bytes] of files) {
+    const decoded = Uint8Array.from(
+      atob(data[path]), c => c.charCodeAt(0));
+    assert.deepEqual(decoded, bytes, path);
+  }
+});
+
+test('buildBootHtml embeds sources, info and boot logic',
+  () => {
+    const boot = buildBootHtml({
+      files: sampleFiles(), shimSource: 'SHIM_MARKER;',
+      info: { selfAddr: 'a@x', selfName: 'me',
+        hasRealtime: true },
+      bundleSource: 'BUNDLE_MARKER;',
+    });
+    assert.ok(boot.includes('"SHIM_MARKER;"'));
+    assert.ok(boot.includes('"BUNDLE_MARKER;"'));
+    assert.ok(boot.includes('"selfAddr":"a@x"'));
+    assert.ok(boot.includes('"hasRealtime":true'));
+    // the boot script bundles inside the sandbox itself
+    assert.ok(boot.includes('mod.buildGuestHtml'));
+    assert.ok(boot.includes('URL.createObjectURL'));
+    assert.ok(boot.includes('document.write'));
+    assert.ok(boot.includes('type="module"'));
+  });
+
+test('buildBootHtml keeps hostile strings inside the script',
+  () => {
+    const boot = buildBootHtml({
+      files: sampleFiles(),
+      shimSource: '</script><script>alert(1)</script>',
+      info: { selfName: '</script>' },
+      bundleSource: 'x = "</script>";',
+    });
+    // the only literal closing tag is the boot's own
+    assert.equal(boot.split('</script>').length - 1, 1);
+    assert.ok(boot.endsWith('</script></body></html>'));
+    assert.ok(boot.includes('\\u003c/script>'));
+  });
+
+test('buildBootHtml requires index.html', () => {
+  assert.throws(() => buildBootHtml({
+    files: new Map([['a.js', new Uint8Array()]]),
+    shimSource: '', info: {}, bundleSource: '',
+  }), /index\.html/);
+});
+
+test('rewriteHtml drops app-supplied CSP meta tags', () => {
+  const html = '<head><meta http-equiv="Content-Security-Policy"'
+    + ' content="style-src \'self\'"><meta charset="utf-8">'
+    + '</head><img src="a.png">';
+  const out = rewriteHtml(html, () => 'test-blob:0');
+  assert.ok(!out.toLowerCase().includes('content-security-policy'));
+  assert.ok(out.includes('<meta charset="utf-8">'));
+  assert.ok(out.includes('src="test-blob:0"'));
 });

@@ -6,7 +6,8 @@
 import { Vault, RealtimeBridge, maxPlaintextSize }
   from './src/core.js';
 import { unzipToMap } from './src/unzip.js';
-import { buildGuestHtml } from './src/bundle.js';
+import { buildBootHtml } from './src/bundle.js';
+import bundleSource from './src/bundle.js?raw';
 import shimSource from './src/webxdc-shim.js?raw';
 
 // size budget for one encrypted outer update, derived from
@@ -17,7 +18,6 @@ const PLAINTEXT_BUDGET =
 const vault = new Vault({ maxAppSize: PLAINTEXT_BUDGET });
 let iframe = null;
 let running = false;
-let guestUrls = [];
 let outerChannel = null;
 let rtBridge = null;
 
@@ -182,7 +182,7 @@ async function runApp() {
   running = true;
   try {
     const files = await unzipToMap(vault.appDefinition.bytes);
-    const { html, urls } = buildGuestHtml({
+    const html = buildBootHtml({
       files,
       shimSource,
       info: {
@@ -198,10 +198,8 @@ async function runApp() {
         // envelope, so pass the derived budget down
         sendUpdateMaxSize: PLAINTEXT_BUDGET,
       },
-      createUrl: (bytes, type) =>
-        URL.createObjectURL(new Blob([bytes], { type })),
+      bundleSource,
     });
-    guestUrls = urls;
     renderFrame(html);
   } catch (err) {
     running = false;
@@ -217,11 +215,15 @@ async function runApp() {
 }
 
 function renderFrame(html) {
-  // the guest runs same-origin (no sandbox attribute): it is
-  // trusted like the vault itself and can in principle reach
-  // this document. Isolation from the outside world comes
-  // from the webxdc runtime, not from the vault.
-  iframe = el('iframe', { id: 'guest-frame' });
+  // no allow-same-origin: the guest runs in an opaque origin
+  // and cannot reach this document, the Vault, or the key;
+  // it can only speak the postMessage bridge protocol. Its
+  // blob: URLs are created inside the sandbox and die with
+  // the iframe document, so nothing needs revoking here.
+  iframe = el('iframe', {
+    id: 'guest-frame',
+    sandbox: 'allow-scripts allow-forms allow-modals',
+  });
   iframe.srcdoc = html;
   screen(header(), iframe);
 }
@@ -229,8 +231,6 @@ function renderFrame(html) {
 function teardownApp() {
   running = false;
   iframe = null;
-  for (const u of guestUrls) URL.revokeObjectURL(u);
-  guestUrls = [];
   if (outerChannel) outerChannel.leave();
   outerChannel = null;
   rtBridge = null;

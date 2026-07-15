@@ -47,7 +47,7 @@ or intercepted the network traffic.
   acceleration, making brute-force attacks extremely slow.
 
 
-## Building
+## Reproducible Building
 
 ```bash
 pnpm install
@@ -56,13 +56,10 @@ pnpm build
 
 The `.xdc` file is produced as `vault.xdc`.
 
-
-## Reproducible Builds
-
-The `vault.xdc` package is built deterministically.
+The `vault.xdc` file is built deterministically.
 Every file and directory in the ZIP is sorted alphabetically,
-and their modification times are set to a fixed epoch
-(1980-01-01).
+and their modification times are set to the timestamp of the last Git
+commit (falling back to a fixed epoch if Git is unavailable).
 This guarantees that building from the same source commit
 always produces the identical binary file and SHA-256 hash.
 

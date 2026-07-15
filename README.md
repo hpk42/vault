@@ -58,13 +58,12 @@ The `.xdc` file is produced as `vault.xdc`.
 
 The `vault.xdc` file is built deterministically.
 Every file and directory in the ZIP is sorted alphabetically,
-and their modification times are set to a fixed date
-(2026-07-15).
+and their modification times are set to a fixed date (2026-07-15).
 This guarantees that building from the same source commit
-always produces the identical binary file and SHA-256 hash.
+always produces the identical binary `xdc` file and SHA-256 hash.
 
-The GitHub release workflow automatically verifies that the pre-built
-`vault.xdc` uploaded by the release script matches the source code
+The release workflow automatically verifies that the pre-built `vault.xdc` 
+uploaded by the release script matches the source code
 by rebuilding it on the runner and comparing hashes.
 
 

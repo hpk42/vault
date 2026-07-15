@@ -1,392 +1,309 @@
-import loadArgon2id from './argon2id-inline.js';
+// Thin UI layer: translates DOM/webxdc/postMessage events into
+// calls on the core classes (src/core.js) and back. Contains no
+// mechanics of its own; the core is tested without mocks in
+// tests/vault.test.js.
+
+import { Vault, RealtimeBridge, maxPlaintextSize }
+  from './src/core.js';
+import { unzipToMap } from './src/unzip.js';
+import { buildGuestHtml } from './src/bundle.js';
+import shimSource from './src/webxdc-shim.js?raw';
+
+// size budget for one encrypted outer update, derived from
+// what the webxdc runtime advertises
+const PLAINTEXT_BUDGET =
+  maxPlaintextSize(window.webxdc.sendUpdateMaxSize);
+
+const vault = new Vault({ maxAppSize: PLAINTEXT_BUDGET });
+let iframe = null;
+let running = false;
+let guestUrls = [];
+let outerChannel = null;
+let rtBridge = null;
+
+vault.onSendUpdate = (payload, descr) => {
+  window.webxdc.sendUpdate({ payload }, descr);
+};
+
+vault.onAppChanged = () => {
+  if (vault.key && !running) runApp();
+};
+
+window.webxdc.setUpdateListener(
+  (u) => vault.applyUpdate(u), 0);
 
 
-/* ---- crypto helpers ---- */
+/* ---- tiny DOM helper ---- */
 
-const argon2Ready = loadArgon2id();
-const te = new TextEncoder();
-const td = new TextDecoder();
-const FIXED_SALT = te.encode('vault-v1');
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') e.className = v;
+      else if (k.startsWith('on'))
+        e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    if (typeof c === 'string') e.append(c);
+    else if (c) e.append(c);
+  }
+  return e;
+}
 
-async function deriveKey(passphrase) {
-  const argon2id = await argon2Ready;
-  const raw = argon2id({
-    password: te.encode(passphrase),
-    salt: FIXED_SALT,
-    parallelism: 1,
-    passes: 20,
-    memorySize: 2 ** 16,
-    tagLength: 32,
+function screen(...children) {
+  const app = document.getElementById('app');
+  app.replaceChildren(...children.filter(Boolean));
+  return app;
+}
+
+
+/* ---- entry screen ---- */
+
+function renderEntry() {
+  const input = el('input', {
+    id: 'pass-input', class: 'input',
+    type: 'text',
+    placeholder: 'Enter passphrase',
   });
-  if (raw.length === 0) {
-    throw new Error(
-      'argon2id produced 0-byte key -- check parameter names'
-    );
-  }
-  return crypto.subtle.importKey(
-    'raw', raw,
-    { name: 'AES-GCM' },
-    false, ['encrypt', 'decrypt']
-  );
-}
-
-async function encrypt(key, plaintext) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, key, plaintext
-  );
-  return {
-    iv: btoa(String.fromCharCode(...iv)),
-    data: btoa(String.fromCharCode(...new Uint8Array(ct)))
+  input.onkeydown = e => {
+    if (e.key === 'Enter') doUnlock();
   };
-}
-
-async function decrypt(key, ivB64, dataB64) {
-  try {
-    const iv = Uint8Array.from(
-      atob(ivB64), c => c.charCodeAt(0));
-    const ct = Uint8Array.from(
-      atob(dataB64), c => c.charCodeAt(0));
-    return await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv }, key, ct);
-  } catch {
-    return null;
-  }
-}
-
-
-/* ---- Vault state container ---- */
-
-export class Vault {
-  constructor() {
-    this.updates = [];
-    this.passphrase = null;
-    this.key = null;
-    this.maxVersion = 0;
-    this.content = '';
-    this.files = [];
-    this.onSendUpdate = null;
-    this.onStateChanged = null;
-  }
-
-  async unlock(passphrase) {
-    this.passphrase = passphrase;
-    this.key = await deriveKey(passphrase);
-    this.maxVersion = 0;
-    await this._resolve();
-  }
-
-  async lock() {
-    await this.save(this.content, this.files);
-    this.passphrase = null;
-    this.key = null;
-    this.content = '';
-    this.files = [];
-    this.maxVersion = 0;
-  }
-
-  async save(text, files) {
-    if (!this.key) return;
-    this.content = text;
-    this.files = files;
-
-    const inner = {
-      version: ++this.maxVersion,
-      tiebreak: Math.random().toString(36),
-      text: this.content,
-      files: this.files,
-    };
-    const enc = await encrypt(
-      this.key,
-      te.encode(JSON.stringify(inner))
-    );
-    const payload = { iv: enc.iv, data: enc.data };
-    this.updates.push(payload);
-
-    if (this.onSendUpdate) {
-      this.onSendUpdate(payload);
-    }
-  }
-
-  async applyUpdate(update) {
-    const p = update.payload;
-    if (!p || !p.iv || !p.data) return;
-
-    this.updates.push(p);
-    if (!this.key) return;
-
-    await this._resolve();
-    if (this.onStateChanged) this.onStateChanged();
-  }
-
-  async _tryDecrypt(p) {
-    if (!this.key) return null;
-    const buf = await decrypt(this.key, p.iv, p.data);
-    if (!buf) return null;
-    try {
-      return JSON.parse(td.decode(buf));
-    } catch { return null; }
-  }
-
-  async _resolve() {
-    let best = null;
-    for (const p of this.updates) {
-      const inner = await this._tryDecrypt(p);
-      if (!inner) continue;
-      if (inner.version > this.maxVersion) {
-        this.maxVersion = inner.version;
-      }
-      if (!best
-          || inner.version > best.version
-          || (inner.version === best.version
-              && inner.tiebreak > best.tiebreak)) {
-        best = inner;
-      }
-    }
-    this.content = best?.text || '';
-    this.files = best?.files || [];
-  }
-}
-
-
-/* ---- browser UI (only runs in DOM environment) ---- */
-
-if (typeof window !== 'undefined'
-    && typeof document !== 'undefined') {
-  const vault = new Vault();
-
-  vault.onSendUpdate = (payload) => {
-    window.webxdc.sendUpdate({ payload }, '');
-  };
-
-  vault.onStateChanged = () => {
-    const ta = document.getElementById('ta');
-    if (ta && ta.value !== vault.content) {
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      ta.value = vault.content;
-      ta.selectionStart = start;
-      ta.selectionEnd = end;
-    }
-    renderFileList();
-  };
-
-  function el(tag, attrs, ...children) {
-    const e = document.createElement(tag);
-    if (attrs) {
-      for (const [k, v] of Object.entries(attrs)) {
-        if (k === 'class') e.className = v;
-        else if (k.startsWith('on'))
-          e.addEventListener(k.slice(2), v);
-        else e.setAttribute(k, v);
-      }
-    }
-    for (const c of children) {
-      if (typeof c === 'string') e.append(c);
-      else if (c) e.append(c);
-    }
-    return e;
-  }
-
-  function markDirty() {
-    const badge = document.getElementById('edit-badge');
-    const lockBtn = document.getElementById('lock-btn');
-    if (badge) badge.style.display = '';
-    if (lockBtn) lockBtn.classList.add('lock-dirty');
-  }
-
-  function renderEntry() {
-    const app = document.getElementById('app');
-    app.replaceChildren();
-
-    const input = el('input', {
-      id: 'number-input', class: 'input',
-      type: 'text',
-      placeholder: 'Enter passphrase'
-    });
-    input.onkeydown = e => {
-      if (e.key === 'Enter') doUnlock();
-    };
-
-    const btn = el('button', {
-      id: 'unlock-btn', class: 'btn',
-      onclick: doUnlock
-    }, 'Unlock Vault');
-
-    const status = el('div', {
-      id: 'unlock-status', class: 'hint'
-    });
-
-    app.append(
-      el('div', { class: 'entry' },
-        el('img', { class: 'icon', src: 'icon.jpg' }),
-        el('h1', null, 'Vault'),
-        input, btn, status
-      )
-    );
-
-    input.focus();
-  }
-
-  async function doUnlock() {
-    const input = document.getElementById('number-input');
-    const btn = document.getElementById('unlock-btn');
-    const status =
-      document.getElementById('unlock-status');
-    const passphrase = input.value.trim();
-    if (!passphrase) return;
-
-    input.disabled = true;
-    btn.disabled = true;
-    btn.textContent = 'Unlocking\u2026';
-    status.textContent = 'Deriving key, please wait\u2026';
-    await new Promise(r => setTimeout(r, 50));
-
-    await vault.unlock(passphrase);
-    renderVault();
-  }
-
-  async function doLock() {
-    await vault.lock();
-    renderEntry();
-  }
-
-  function renderVault() {
-    const app = document.getElementById('app');
-    app.replaceChildren();
-
-    const numDiv = el('div', { class: 'number' });
-    numDiv.textContent = vault.passphrase;
-
-    const lockBtn = el('button', {
-      id: 'lock-btn',
-      class: 'lock-btn', onclick: doLock
-    }, 'Lock');
-
-    const editBadge = el('span', {
-      id: 'edit-badge', class: 'edit-badge'
-    }, 'editing');
-    editBadge.style.display = 'none';
-
-    const header = el('div', { class: 'vault-header' },
-      el('div', null,
-        el('div', { class: 'label' }, 'Vault'),
-        numDiv
-      ),
-      el('div', { class: 'vault-actions' },
-        editBadge, lockBtn
-      )
-    );
-
-    const ta = el('textarea', {
-      id: 'ta', placeholder: 'Write anything...'
-    });
-    ta.value = vault.content;
-
-    const fileInput = el('input', {
-      type: 'file', id: 'file-input',
-      style: 'display:none'
-    });
-    const attachLabel = el('label', {
-      class: 'attach-btn'
-    }, '+ Attach', fileInput);
-
-    const fileListDiv = el('div', { id: 'file-list' });
-
-    const fileSection = el('div', {
-      class: 'file-section'
-    },
-      el('div', { class: 'file-header' },
-        el('span', null,
-          'Attachments (max 200 KB each)'),
-        attachLabel
-      ),
-      fileListDiv
-    );
-
-    const hint = el('div', { class: 'hint' },
-      'Changes are saved when you lock the vault');
-
-    app.append(header, ta, fileSection, hint);
-
-    ta.focus();
-    ta.selectionStart = ta.selectionEnd =
-      ta.value.length;
-
-    ta.oninput = () => {
-      vault.content = ta.value;
-      markDirty();
-    };
-
-    fileInput.onchange = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 200 * 1024) {
-        alert('Max file size is 200 KB');
-        return;
-      }
-      const buf = await file.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(
-        ...new Uint8Array(buf)));
-      vault.files.push({ name: file.name, data: b64 });
-      markDirty();
-      renderFileList();
-      e.target.value = '';
-    };
-
-    renderFileList();
-  }
-
-  function renderFileList() {
-    const container = document.getElementById('file-list');
-    if (!container) return;
-    container.replaceChildren();
-    vault.files.forEach((f, i) => {
-      const item = document.createElement('div');
-      item.className = 'file-item';
-
-      const info = document.createElement('div');
-      info.className = 'file-info';
-      const nameEl = document.createElement('div');
-      nameEl.className = 'file-name';
-      nameEl.textContent = f.name;
-      info.append(nameEl);
-
-      const actions = document.createElement('div');
-      actions.className = 'file-actions';
-      const dlBtn = document.createElement('button');
-      dlBtn.className = 'dl';
-      dlBtn.textContent = '\u2193';
-      dlBtn.onclick = () => {
-        const raw = Uint8Array.from(
-          atob(f.data), c => c.charCodeAt(0));
-        const blob = new Blob([raw]);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = f.name; a.click();
-        URL.revokeObjectURL(url);
-      };
-      const delBtn = document.createElement('button');
-      delBtn.className = 'del';
-      delBtn.textContent = '\u00d7';
-      delBtn.onclick = () => {
-        vault.files.splice(i, 1);
-        markDirty();
-        renderFileList();
-      };
-      actions.append(dlBtn, delBtn);
-
-      item.append(info, actions);
-      container.appendChild(item);
-    });
-  }
-
-  window.webxdc.setUpdateListener(
-    (u) => vault.applyUpdate(u), 0);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && vault.key) {
-      vault.save(vault.content, vault.files);
-    }
+  const btn = el('button', {
+    id: 'unlock-btn', class: 'btn', onclick: doUnlock,
+  }, 'Unlock Vault');
+  const status = el('div', {
+    id: 'unlock-status', class: 'hint',
   });
+
+  screen(
+    el('div', { class: 'entry' },
+      el('img', { class: 'icon', src: 'icon.jpg' }),
+      el('h1', null, 'Vault'),
+      input, btn, status,
+    )
+  );
+  input.focus();
+}
+
+async function doUnlock() {
+  const input = document.getElementById('pass-input');
+  const btn = document.getElementById('unlock-btn');
+  const status = document.getElementById('unlock-status');
+  const passphrase = input.value.trim();
+  if (!passphrase) return;
+
+  input.disabled = true;
+  btn.disabled = true;
+  btn.textContent = 'Unlocking\u2026';
+  status.textContent = 'Deriving key, please wait\u2026';
+  await new Promise(r => setTimeout(r, 50));
+
+  await vault.unlock(passphrase);
+  if (vault.appDefinition) runApp();
+  else renderUpload();
+}
+
+function doLock() {
+  teardownApp();
+  vault.lock();
   renderEntry();
 }
+
+
+/* ---- upload screen (no app bound to this passphrase) ---- */
+
+function fmtSize(bytes) {
+  return bytes >= 1024 * 1024
+    ? (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    : Math.floor(bytes / 1024) + ' KB';
+}
+
+function renderUpload(waiting) {
+  const fileInput = el('input', {
+    type: 'file', accept: '.xdc',
+    style: 'display:none',
+  });
+  fileInput.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!/\.xdc$/i.test(file.name)) {
+      alert('app must have a .xdc extension');
+      return;
+    }
+    if (file.size > vault.maxAppSize) {
+      alert(`app is too large (max ${fmtSize(vault.maxAppSize)})`);
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await vault.uploadApp(bytes, file.name);
+    // the app starts when our own update echoes back
+    // through the outer update listener (onAppChanged)
+    renderUpload(true);
+  };
+
+  screen(
+    header(),
+    el('div', { class: 'entry' },
+      el('h1', null, waiting
+        ? 'Encrypting & sending app\u2026'
+        : 'No app installed'),
+      el('div', { class: 'hint' }, waiting
+        ? 'Waiting for the app update to arrive.'
+        : `Choose a .xdc file (max ${fmtSize(vault.maxAppSize)}) `
+          + 'to bind to this passphrase. This choice is permanent.'),
+      waiting ? null : el('button', {
+        class: 'btn',
+        onclick: () => fileInput.click(),
+      }, 'Select .xdc app'),
+      fileInput,
+    )
+  );
+}
+
+
+/* ---- run screen (guest app in iframe) ---- */
+
+function header() {
+  return el('div', { class: 'vault-header' },
+    el('div', null,
+      el('div', { class: 'label' }, 'Vault'),
+      el('div', { class: 'number' }, vault.passphrase),
+    ),
+    el('button', {
+      class: 'lock-btn', onclick: doLock,
+    }, 'Lock'),
+  );
+}
+
+async function runApp() {
+  if (running) return;
+  running = true;
+  try {
+    const files = await unzipToMap(vault.appDefinition.bytes);
+    const { html, urls } = buildGuestHtml({
+      files,
+      shimSource,
+      info: {
+        selfAddr: window.webxdc.selfAddr,
+        selfName: window.webxdc.selfName,
+        hasRealtime: typeof window.webxdc.joinRealtimeChannel
+          === 'function',
+        hasImportFiles: typeof window.webxdc.importFiles
+          === 'function',
+        hasSendToChat: typeof window.webxdc.sendToChat
+          === 'function',
+        // guest updates are wrapped in one encrypted
+        // envelope, so pass the derived budget down
+        sendUpdateMaxSize: PLAINTEXT_BUDGET,
+      },
+      createUrl: (bytes, type) =>
+        URL.createObjectURL(new Blob([bytes], { type })),
+    });
+    guestUrls = urls;
+    renderFrame(html);
+  } catch (err) {
+    running = false;
+    console.error(err);
+    screen(
+      header(),
+      el('div', { class: 'entry' },
+        el('h1', null, 'Failed to start app'),
+        el('div', { class: 'hint' }, String(err)),
+      )
+    );
+  }
+}
+
+function renderFrame(html) {
+  // the guest runs same-origin (no sandbox attribute): it is
+  // trusted like the vault itself and can in principle reach
+  // this document. Isolation from the outside world comes
+  // from the webxdc runtime, not from the vault.
+  iframe = el('iframe', { id: 'guest-frame' });
+  iframe.srcdoc = html;
+  screen(header(), iframe);
+}
+
+function teardownApp() {
+  running = false;
+  iframe = null;
+  for (const u of guestUrls) URL.revokeObjectURL(u);
+  guestUrls = [];
+  if (outerChannel) outerChannel.leave();
+  outerChannel = null;
+  rtBridge = null;
+}
+
+
+/* ---- bridge: guest iframe <-> core classes ---- */
+
+function ensureRealtime() {
+  if (rtBridge) return;
+  outerChannel = window.webxdc.joinRealtimeChannel();
+  rtBridge = new RealtimeBridge(vault.key);
+  rtBridge.onSend = (bytes) => outerChannel.send(bytes);
+  outerChannel.setListener(
+    (bytes) => rtBridge.handleIncoming(bytes));
+}
+
+window.addEventListener('message', (ev) => {
+  if (!iframe || ev.source !== iframe.contentWindow) return;
+  const msg = ev.data;
+  if (!msg || typeof msg.type !== 'string') return;
+
+  if (msg.type === 'vault-setUpdateListener') {
+    const target = iframe.contentWindow;
+    vault.setInnerUpdateListener(msg.serial, (update) => {
+      target.postMessage(
+        { type: 'vault-update', update }, '*');
+    });
+    target.postMessage({ type: 'vault-replay-done' }, '*');
+  } else if (msg.type === 'vault-sendUpdate') {
+    vault.sendSubAppUpdate(msg.update);
+  } else if (msg.type === 'vault-realtime-join') {
+    ensureRealtime();
+    const target = iframe.contentWindow;
+    rtBridge.setGuestListener((bytes) => {
+      target.postMessage(
+        { type: 'vault-realtime-data', data: bytes }, '*');
+    });
+  } else if (msg.type === 'vault-realtime-send') {
+    if (rtBridge) {
+      rtBridge.sendFromGuest(new Uint8Array(msg.data));
+    }
+  } else if (msg.type === 'vault-realtime-leave') {
+    if (rtBridge) rtBridge.leaveGuest();
+  } else if (msg.type === 'vault-importFiles') {
+    const target = iframe.contentWindow;
+    window.webxdc.importFiles(msg.filter).then((files) => {
+      target.postMessage(
+        { type: 'vault-importFiles-result', files }, '*');
+    });
+  } else if (msg.type === 'vault-sendToChat') {
+    const target = iframe.contentWindow;
+    Promise.resolve(window.webxdc.sendToChat(msg.content))
+      .then(() => target.postMessage(
+        { type: 'vault-sendToChat-result', ok: true }, '*'))
+      .catch((err) => target.postMessage(
+        { type: 'vault-sendToChat-result', ok: false,
+          error: String(err) }, '*'));
+  } else if (msg.type === 'vault-guest-error') {
+    showGuestError(String(msg.error));
+  }
+});
+
+// surface guest errors outside the iframe (its devtools
+// console can be hard to reach on mobile)
+function showGuestError(text) {
+  console.error('[vault guest]', text);
+  let banner = document.getElementById('guest-error');
+  if (!banner) {
+    banner = el('div', { id: 'guest-error' });
+    document.getElementById('app').append(banner);
+  }
+  banner.append(el('div', null, text));
+}
+
+renderEntry();

@@ -109,18 +109,6 @@
       gap: 6px;
       align-items: center;
     }
-    .edit-badge {
-      font-size: 11px;
-      color: #5eead4;
-      padding: 3px 8px;
-      border: 1px solid #5eead4;
-      border-radius: 8px;
-    }
-    .lock-btn.lock-dirty {
-      background: #2563eb;
-      border-color: #2563eb;
-      color: white;
-    }
     .lock-btn {
       padding: 6px 14px;
       font-size: 13px;
@@ -131,23 +119,28 @@
       cursor: pointer;
       font: inherit;
     }
-    #app textarea {
+    #guest-frame {
       flex: 1;
       width: 100%;
-      padding: 14px;
-      font-size: 16px;
-      line-height: 1.5;
-      background: #1c1c1e;
       border: 1px solid #333;
-      border-radius: 16px;
-      color: white;
-      resize: none;
-      font-family: ui-monospace, SFMono-Regular, Menlo,
-                   Monaco, Consolas, monospace;
+      border-radius: 12px;
+      background: white;
     }
-    #app textarea:focus {
-      outline: none;
-      border-color: #3b82f6;
+    #guest-error {
+      flex-shrink: 0;
+      max-height: 30vh;
+      overflow-y: auto;
+      background: #3a1010;
+      border: 1px solid #a33;
+      border-radius: 8px;
+      color: #f99;
+      font-size: 11px;
+      font-family: monospace;
+      padding: 6px 8px;
+      margin-top: 4px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      user-select: text;
     }
     .hint {
       text-align: center;
@@ -157,57 +150,6 @@
       flex-shrink: 0;
     }
 
-    /* ---------- file attachments ---------- */
-
-    .file-section {
-      flex-shrink: 0;
-      margin-top: 8px;
-    }
-    .file-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-      color: #777;
-      margin-bottom: 6px;
-    }
-    .attach-btn {
-      font-size: 12px;
-      padding: 4px 10px;
-      border: 1px solid #444;
-      border-radius: 8px;
-      background: transparent;
-      color: #ddd;
-      cursor: pointer;
-      font: inherit;
-    }
-    .file-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 10px;
-      background: #1c1c1e;
-      border: 1px solid #333;
-      border-radius: 10px;
-      margin-bottom: 4px;
-      font-size: 13px;
-    }
-    .file-info { overflow: hidden; }
-    .file-name {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .file-size { font-size: 10px; color: #666; }
-    .file-actions button {
-      background: none;
-      border: none;
-      font-size: 16px;
-      cursor: pointer;
-      padding: 2px 6px;
-    }
-    .file-actions .dl { color: #3b82f6; }
-    .file-actions .del { color: #e11d48; }
   </style>
 </head>
 <body>

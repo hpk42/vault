@@ -3,20 +3,9 @@ import path from 'node:path';
 import process from 'node:process';
 import JSZip from 'jszip';
 
-import { execSync } from 'node:child_process';
-
 const DIST_DIR = './dist';
 const OUT_FILE = './vault.xdc';
-
-let BUILD_DATE = new Date('1980-01-01T00:00:00Z');
-try {
-  const gitDate = execSync('git log -1 --format=%cI', { encoding: 'utf-8' }).trim();
-  if (gitDate) {
-    BUILD_DATE = new Date(gitDate);
-  }
-} catch {
-  // Fallback to fixed epoch if git is unavailable
-}
+const BUILD_DATE = new Date('2026-07-15T00:00:00Z');
 
 function getFiles(dir) {
   const results = [];

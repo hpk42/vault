@@ -23,6 +23,7 @@ export default [
         atob: 'readonly',
         btoa: 'readonly',
         WebAssembly: 'readonly',
+        DecompressionStream: 'readonly',
       },
     },
     rules: {

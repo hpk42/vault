@@ -12,7 +12,7 @@ const IV_BYTES = 12;
 // fallback when the runtime doesn't advertise a limit
 export const MAX_APP_SIZE = 1024 * 1024;
 
-// largest plaintext (app archive or guest update) that still
+// largest plaintext (app archive or room update) that still
 // fits into one outer update of the given size budget: the
 // encrypted envelope travels as base64 { iv, data } JSON
 // (4/3 inflation), plus AES-GCM tag, IV, and framing --
@@ -26,7 +26,7 @@ export function maxPlaintextSize(sendUpdateMaxSize) {
 export async function deriveKey(passphrase) {
   const argon2id = await argon2Ready;
   const raw = argon2id({
-    password: te.encode(passphrase),
+    password: te.encode(passphrase.normalize('NFC')),
     salt: FIXED_SALT,
     parallelism: 1,
     passes: 20,
@@ -146,7 +146,7 @@ export async function decryptEnvelope(key, payload) {
 
    Pure core class. All I/O goes through plain data:
    inputs  : applyUpdate(), unlock(), uploadApp(),
-             sendSubAppUpdate(), setInnerUpdateListener()
+             sendRoomUpdate(), setRoomUpdateListener()
    outputs : onSendUpdate(payload, descr) and onAppChanged()
              callbacks.
    It never touches webxdc, DOM or iframes,
@@ -156,13 +156,14 @@ export class Vault {
   constructor({ maxAppSize: limit = MAX_APP_SIZE } = {}) {
     this.maxAppSize = limit;
     this.updates = [];        // raw outer { serial, payload }
+    this._serialOffset = 0;   // count of preloaded updates
     this.passphrase = null;
     this.key = null;
     this.appDefinition = null; // { serial, filename, bytes }
-    this.subUpdates = [];      // { serial, update }, sorted
+    this.roomUpdates = [];      // { serial, update }, sorted
     this.onSendUpdate = null;  // (payload, descr) => {}
     this.onAppChanged = null;  // () => {}
-    this._innerListener = null; // { fn, lastSerial }
+    this._roomListener = null; // { fn, lastSerial }
     this._queue = Promise.resolve();
   }
 
@@ -179,16 +180,36 @@ export class Vault {
     this.passphrase = null;
     this.key = null;
     this.appDefinition = null;
-    this.subUpdates = [];
-    this._innerListener = null;
+    this.roomUpdates = [];
+    this._roomListener = null;
   }
 
   // feed every outer webxdc update (own echoes included) here;
   // processing is serialized to preserve arrival order
   applyUpdate(update) {
-    const p = update && update.payload;
+    if (!update) return Promise.resolve();
+    return this._apply({
+      serial: update.serial + this._serialOffset,
+      payload: update.payload,
+    });
+  }
+
+  // payloads baked into a shared collection archive occupy
+  // serials 1..N; applyUpdate() shifts live chat serials by
+  // N so they sort after the preloaded history and new
+  // updates keep working
+  preload(payloads) {
+    let last = Promise.resolve();
+    for (const payload of payloads) {
+      last = this._apply(
+        { serial: ++this._serialOffset, payload });
+    }
+    return last;
+  }
+
+  _apply(u) {
+    const p = u.payload;
     if (!p || !p.iv || !p.data) return Promise.resolve();
-    const u = { serial: update.serial, payload: p };
     this.updates.push(u);
     this._queue = this._queue.then(() => {
       if (this.key) return this._integrate(u);
@@ -209,24 +230,24 @@ export class Vault {
     this._send(payload);
   }
 
-  async sendSubAppUpdate(update) {
+  async sendRoomUpdate(update) {
     if (!this.key) throw new Error('vault is locked');
     const payload = await encryptEnvelope(this.key, {
-      type: 'sub_app_update',
+      type: 'room_update',
       update,
     });
     this._send(payload);
   }
 
-  // fn receives guest updates ordered by outer serial, with
+  // fn receives room updates ordered by outer serial, with
   // update.serial / update.max_serial set to outer serials;
   // only updates with serial > sinceSerial are delivered
-  setInnerUpdateListener(sinceSerial, fn) {
+  setRoomUpdateListener(sinceSerial, fn) {
     if (!fn) {
-      this._innerListener = null;
+      this._roomListener = null;
       return;
     }
-    this._innerListener = { fn, lastSerial: sinceSerial };
+    this._roomListener = { fn, lastSerial: sinceSerial };
     this._forward();
   }
 
@@ -250,24 +271,24 @@ export class Vault {
         };
         if (this.onAppChanged) this.onAppChanged();
       }
-    } else if (header.type === 'sub_app_update'
+    } else if (header.type === 'room_update'
         && header.update) {
-      insertSorted(this.subUpdates,
+      insertSorted(this.roomUpdates,
         { serial, update: header.update });
       this._forward();
     }
   }
 
   _forward() {
-    const l = this._innerListener;
-    if (!l || this.subUpdates.length === 0) return;
+    const l = this._roomListener;
+    if (!l || this.roomUpdates.length === 0) return;
     const maxSerial =
-      this.subUpdates[this.subUpdates.length - 1].serial;
-    for (const su of this.subUpdates) {
-      if (su.serial <= l.lastSerial) continue;
-      l.lastSerial = su.serial;
-      l.fn(Object.assign({}, su.update, {
-        serial: su.serial,
+      this.roomUpdates[this.roomUpdates.length - 1].serial;
+    for (const ru of this.roomUpdates) {
+      if (ru.serial <= l.lastSerial) continue;
+      l.lastSerial = ru.serial;
+      l.fn(Object.assign({}, ru.update, {
+        serial: ru.serial,
         max_serial: maxSerial,
       }));
     }

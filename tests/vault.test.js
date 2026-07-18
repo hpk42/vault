@@ -60,41 +60,30 @@ const te = new TextEncoder();
 
 /* ---- passphrase isolation ---- */
 
-test('different passphrases host different apps', async () => {
+test('updates from wrong passphrase are ignored', async () => {
   const a = new Vault();
   const b = new Vault();
   const chat = connectChat(a, b);
   await a.unlock('pass-A');
   await b.unlock('pass-B');
 
+  const received = [];
+  b.setRoomUpdateListener(0, u => received.push(u));
   const zipA = te.encode('zip-A');
   const zipB = te.encode('zip-B');
   await a.uploadApp(zipA, 'a.xdc');
   await b.uploadApp(zipB, 'b.xdc');
+  await a.sendRoomUpdate({ payload: 'private to A' });
   await chat.settle();
 
   assert.deepStrictEqual(a.appDefinition.bytes, zipA,
     'vault A must run its own app');
   assert.deepStrictEqual(b.appDefinition.bytes, zipB,
-    'vault B must run its own app');
-});
-
-test('updates from wrong passphrase are ignored', async () => {
-  const sender = new Vault();
-  const receiver = new Vault();
-  const chat = connectChat(sender, receiver);
-  await sender.unlock('key-A');
-  await receiver.unlock('key-B');
-
-  const received = [];
-  receiver.setInnerUpdateListener(0, u => received.push(u));
-  await sender.sendSubAppUpdate({ payload: 'private to A' });
-  await chat.settle();
-
-  assert.strictEqual(receiver.subUpdates.length, 0,
-    'wrong-key vault must not decrypt sub-app updates');
+    'foreign app definition must not clobber B\'s app');
+  assert.strictEqual(b.roomUpdates.length, 0,
+    'wrong-key vault must not decrypt room updates');
   assert.strictEqual(received.length, 0,
-    'wrong-key inner listener must never fire');
+    'wrong-key room listener must never fire');
 });
 
 
@@ -204,9 +193,9 @@ test('envelope round-trips header and binary body', () => {
 });
 
 
-/* ---- sub-app update flow ---- */
+/* ---- room update flow ---- */
 
-test('sub-app updates round-trip', async () => {
+test('room updates round-trip', async () => {
   const a = new Vault();
   const b = new Vault();
   const chat = connectChat(a, b);
@@ -214,8 +203,8 @@ test('sub-app updates round-trip', async () => {
   await b.unlock('shared');
 
   const received = [];
-  b.setInnerUpdateListener(0, u => received.push(u));
-  await a.sendSubAppUpdate(
+  b.setRoomUpdateListener(0, u => received.push(u));
+  await a.sendRoomUpdate(
     { payload: { move: 'e4' }, info: 'white moved' });
   await chat.settle();
 
@@ -233,7 +222,7 @@ test('updates are forwarded in outer serial order',
     await sender.unlock('order');
     const payloads = capturePayloads(sender);
     for (const n of [1, 2, 3]) {
-      await sender.sendSubAppUpdate({ payload: n });
+      await sender.sendRoomUpdate({ payload: n });
     }
 
     const v = new Vault();
@@ -244,7 +233,7 @@ test('updates are forwarded in outer serial order',
     await v.applyUpdate({ serial: 2, payload: payloads[1] });
 
     const received = [];
-    v.setInnerUpdateListener(0, u => received.push(u));
+    v.setRoomUpdateListener(0, u => received.push(u));
     assert.deepStrictEqual(
       received.map(u => u.serial), [1, 2, 3],
       'replay must be ordered by outer serial');
@@ -260,33 +249,53 @@ test('setUpdateListener replays only after given serial',
     await a.unlock('resume');
     await b.unlock('resume');
     for (const n of [1, 2, 3, 4, 5]) {
-      await a.sendSubAppUpdate({ payload: n });
+      await a.sendRoomUpdate({ payload: n });
     }
     await chat.settle();
 
     const received = [];
-    b.setInnerUpdateListener(2, u => received.push(u));
+    b.setRoomUpdateListener(2, u => received.push(u));
     assert.deepStrictEqual(
       received.map(u => u.serial), [3, 4, 5],
       'only updates with serial > 2 must be replayed');
   });
 
-test('late updates reach a registered listener', async () => {
-  const a = new Vault();
-  const b = new Vault();
-  const chat = connectChat(a, b);
-  await a.unlock('live');
-  await b.unlock('live');
 
-  const received = [];
-  b.setInnerUpdateListener(0, u => received.push(u));
-  await a.sendSubAppUpdate({ payload: 'later' });
-  await chat.settle();
+test('preloaded vaults still exchange new updates',
+  async () => {
+    // a sharer's history: app definition + one room update
+    const sharer = new Vault();
+    await sharer.unlock('col');
+    const history = capturePayloads(sharer);
+    await sharer.uploadApp(te.encode('zip'), 'a.xdc');
+    await sharer.sendRoomUpdate({ payload: 'old' });
 
-  assert.strictEqual(received.length, 1,
-    'live update must be forwarded');
-  assert.strictEqual(received[0].payload, 'later');
-});
+    // two peers open the collection: preload the baked-in
+    // payloads, then join a fresh chat
+    const a = new Vault();
+    const b = new Vault();
+    await a.preload(history);
+    await b.preload(history);
+    const chat = connectChat(a, b);
+    await a.unlock('col');
+    await b.unlock('col');
+
+    assert.strictEqual(a.appDefinition.filename, 'a.xdc',
+      'preloaded app definition must be found');
+
+    const received = [];
+    b.setRoomUpdateListener(0, u => received.push(u));
+    await a.sendRoomUpdate({ payload: 'new' });
+    await chat.settle();
+
+    assert.deepStrictEqual(
+      received.map(u => u.payload), ['old', 'new'],
+      'new updates must follow the preloaded history');
+    assert.ok(received[1].serial > received[0].serial,
+      'live serials must sort after preloaded ones');
+    assert.strictEqual(b.appDefinition.serial, 1,
+      'chat updates must not displace the preloaded app');
+  });
 
 
 /* ---- metadata hygiene ---- */
@@ -297,7 +306,7 @@ test('outer updates always use empty descr and expose only '
   const chat = connectChat(v);
   await v.unlock('hygiene');
   await v.uploadApp(te.encode('zip'), 'secret-name.xdc');
-  await v.sendSubAppUpdate({ payload: 'x', info: 'moved' });
+  await v.sendRoomUpdate({ payload: 'x', info: 'moved' });
   await chat.settle();
 
   assert.strictEqual(chat.sent.length, 2);
@@ -394,3 +403,52 @@ function containsSubarray(haystack, needle) {
   }
   return false;
 }
+
+
+test('emoji passphrase round-trips', async () => {
+  const a = new Vault();
+  const b = new Vault();
+  const chat = connectChat(a, b);
+  await a.unlock('\ud83d\udd12\ud83c\udf0d');
+  await b.unlock('\ud83d\udd12\ud83c\udf0d');
+  const zip = crypto.getRandomValues(new Uint8Array(128));
+  await a.uploadApp(zip, 'emoji.xdc');
+  await chat.settle();
+  assert.deepStrictEqual(b.appDefinition.bytes, zip);
+});
+
+
+test('Farsi passphrase round-trips', async () => {
+  const a = new Vault();
+  const b = new Vault();
+  const chat = connectChat(a, b);
+  await a.unlock('\u0631\u0645\u0632 \u0639\u0628\u0648\u0631');
+  await b.unlock('\u0631\u0645\u0632 \u0639\u0628\u0648\u0631');
+  const zip = crypto.getRandomValues(new Uint8Array(128));
+  await a.uploadApp(zip, 'farsi.xdc');
+  await chat.settle();
+  assert.deepStrictEqual(b.appDefinition.bytes, zip);
+});
+
+
+test('NFC and NFD forms derive the same key', async () => {
+  // U+00E9 (e-acute precomposed) vs U+0065 U+0301 (e + combining acute)
+  const nfc = '\u00e9';
+  const nfd = 'e\u0301';
+  assert.notStrictEqual(nfc, nfd,
+    'NFC and NFD strings must differ before normalization');
+
+  const keyA = await deriveKey(nfc);
+  const keyB = await deriveKey(nfd);
+
+  // encrypt with one key, decrypt with the other
+  const te = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv }, keyA, te.encode('test'));
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv }, keyB, ct);
+  assert.strictEqual(
+    new TextDecoder().decode(pt), 'test',
+    'keys derived from NFC and NFD forms must be identical');
+});

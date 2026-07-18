@@ -6,6 +6,11 @@
 // runtime requests). URL creation is injected via the
 // `createUrl` parameter so all of this is testable with
 // plain functions -- no mocks.
+//
+// This module must stay free of imports: buildBootHtml()
+// embeds its source into the guest boot document, which
+// re-imports it from a blob: URL inside the sandboxed
+// iframe (where relative imports cannot resolve).
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -66,9 +71,15 @@ export function normalizePath(baseDir, ref) {
 }
 
 // rewrite src=/href= attributes; resolveRef returns a URL or
-// null to leave the reference untouched
+// null to leave the reference untouched. App-supplied CSP
+// meta tags are dropped: they would block the blob: URLs the
+// app is rewritten to, and guests have no network anyway.
 export function rewriteHtml(html, resolveRef) {
-  return html.replace(
+  return html
+    .replace(
+      /<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi,
+      '')
+    .replace(
     /(src|href)\s*=\s*("([^"]*)"|'([^']*)')/gi,
     (m, attr, _q, dq, sq) => {
       const ref = dq ?? sq;
@@ -108,13 +119,12 @@ window.addEventListener('unhandledrejection', (ev) => {
 });
 `;
 
-// keep room plaintext off the disk: guests share the vault's
-// origin, so real web storage would persist unencrypted.
-// Replace localStorage/sessionStorage with ephemeral
-// in-memory stand-ins and hide indexedDB so apps take their
-// feature-detection fallback. This is hygiene for honest
-// apps, not a security boundary (same-origin guests could
-// undo it); durable room state belongs in webxdc updates.
+// keep room plaintext off the disk and out of shared
+// origin state: localStorage/sessionStorage are replaced by
+// ephemeral in-memory stand-ins and indexedDB is hidden so
+// apps take their feature-detection fallback (the sandbox's
+// opaque origin would make them throw anyway); durable room
+// state belongs in webxdc updates.
 const STORAGE_PATCH = `
 const makeStorage = () => {
   const m = new Map();
@@ -190,6 +200,34 @@ const FETCH_PATCH = `
       return origOpen.call(
         this, method, resolve(url) ?? url, ...rest);
     };
+  // runtime-assigned media/image sources (el.src = ...,
+  // setAttribute, new Audio(path)) bypass fetch/XHR; remap
+  // them at the DOM boundary instead
+  for (const iface of ['HTMLMediaElement',
+    'HTMLImageElement', 'HTMLSourceElement',
+    'HTMLScriptElement']) {
+    const proto = window[iface]?.prototype;
+    const desc = proto
+      && Object.getOwnPropertyDescriptor(proto, 'src');
+    if (!desc) continue;
+    Object.defineProperty(proto, 'src', {
+      ...desc,
+      set(v) { desc.set.call(this, resolve(v) ?? v); },
+    });
+  }
+  const origSetAttr = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    if (String(name).toLowerCase() === 'src') {
+      value = resolve(value) ?? value;
+    }
+    return origSetAttr.call(this, name, value);
+  };
+  window.Audio = new Proxy(window.Audio, {
+    construct(target, args) {
+      if (args.length) args[0] = resolve(args[0]) ?? args[0];
+      return new target(...args);
+    },
+  });
   // support new URL('./asset', import.meta.url): blob URLs
   // are not hierarchical, so resolve relative refs against
   // the archive path the base blob URL was created from
@@ -225,9 +263,10 @@ function jsEscape(obj) {
 // build a self-contained HTML document for the guest app.
 //   files      : Map filename -> Uint8Array (from unzipToMap)
 //   shimSource : source of the webxdc bridge shim
-//   info       : { selfAddr, selfName, hasRealtime }
+//   info       : { selfAddr, selfName, hasRealtime, ... }
 //   createUrl  : (bytes, mimeType) => url string
-// returns { html, urls } -- urls for later revocation
+// returns { html, urls } -- the created URLs (all blob URLs
+// are made inside the sandbox and die with its document)
 export function buildGuestHtml(
   { files, shimSource, info, createUrl }) {
   if (!files.has('index.html')) {
@@ -262,11 +301,92 @@ export function buildGuestHtml(
     + 'window.__vaultFiles = '
     + jsEscape(Object.fromEntries(urls)) + ';\n'
     + FETCH_PATCH;
-  urls.set('webxdc.js', createUrl(
+  const bundleUrl = createUrl(
     te.encode(prelude + '\n' + shimSource),
-    'application/javascript'));
+    'application/javascript');
+  urls.set('webxdc.js', bundleUrl);
 
-  const html = rewriteHtml(
+  let html = rewriteHtml(
     td.decode(files.get('index.html')), resolveRef);
+  // apps that only feature-detect globalThis.webxdc never
+  // load webxdc.js -- inject the bundle so the runtime
+  // patches are always active before any app script
+  if (!html.includes(bundleUrl)) {
+    const tag = `<script src="${bundleUrl}"></script>`;
+    const injected = html.replace(/<head[^>]*>/i,
+      m => m + tag);
+    html = injected.includes(tag) ? injected : tag + html;
+  }
   return { html, urls: [...urls.values()] };
+}
+
+// chunked base64 (duplicated from core.js on purpose: this
+// module must stay import-free, see header comment)
+function b64encode(bytes) {
+  let s = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode.apply(
+      null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(s);
+}
+
+// build the boot document for the sandboxed guest iframe
+// (opaque origin). blob: URLs are
+// origin-bound, so the vault cannot create them for the
+// guest; instead the boot script creates them *inside* the
+// sandbox, where they share the guest's own opaque origin
+// and pass both same-origin and CSP checks. The outer vault
+// document, key, and passphrase remain unreachable; the
+// guest can only speak the postMessage bridge protocol.
+//   files        : Map filename -> Uint8Array
+//   shimSource   : source of the webxdc bridge shim
+//   info         : { selfAddr, selfName, hasRealtime, ... }
+//   bundleSource : the source text of this very module
+export function buildBootHtml(
+  { files, shimSource, info, bundleSource }) {
+  if (!files.has('index.html')) {
+    throw new Error('app archive has no index.html');
+  }
+  const b64files = {};
+  for (const [path, bytes] of files) {
+    b64files[path] = b64encode(bytes);
+  }
+  // all embedded data is \u003c-escaped JSON, so nothing can
+  // terminate the inline <script> early
+  const boot = `
+${ERROR_HOOKS}
+const DATA = ${jsEscape(b64files)};
+const BUNDLE_SRC = ${jsEscape(bundleSource)};
+const SHIM_SRC = ${jsEscape(shimSource)};
+const INFO = ${jsEscape(info)};
+const decode = (s) =>
+  Uint8Array.from(atob(s), c => c.charCodeAt(0));
+(async () => {
+  try {
+    const files = new Map(Object.entries(DATA)
+      .map(([p, s]) => [p, decode(s)]));
+    const mod = await import(URL.createObjectURL(new Blob(
+      [BUNDLE_SRC], { type: 'application/javascript' })));
+    const { html } = mod.buildGuestHtml({
+      files, shimSource: SHIM_SRC, info: INFO,
+      createUrl: (bytes, type) =>
+        URL.createObjectURL(new Blob([bytes], { type })),
+    });
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (err) {
+    document.body.textContent =
+      'failed to start app: ' + err;
+    window.parent.postMessage({ type: 'vault-guest-error',
+      error: 'boot failed: ' + (err && err.stack || err),
+    }, '*');
+  }
+})();
+`;
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+    + '</head><body><script type="module">' + boot
+    + '</scr' + 'ipt></body></html>';
 }
